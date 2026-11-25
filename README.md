@@ -4,6 +4,10 @@ Walking controller for a **12-servo robot dog** (3 joints per leg, MG996R servos
 
 **▶ Live simulator:** https://pribinkbenny.github.io/05-quadruped/sim/
 
+<img src="docs/simulator.jpg" width="560" alt="Browser simulator: the robot trotting, diagonal legs planted, foot trails and joint angles">
+
+*The live simulator mid-trot: diagonal legs FL and RR planted (green), foot trails tracing clean step arcs, joint angles updating live.*
+
 ```
 command (vx, vy, yaw) → gait (foot targets) → body IK (roll/pitch/yaw/shift) → leg IK → servo map → PCA9685
 ```
