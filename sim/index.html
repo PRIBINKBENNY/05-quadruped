@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quadruped gait simulator</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --text:#e6e8ee; --muted:#8b93a7; --acc:#f2a541; --ok:#58c48b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text);
+         display:grid; grid-template-columns: 1fr 320px; height:100vh; }
+  #view { position:relative; }
+  canvas { display:block; }
+  aside { background:var(--panel); border-left:1px solid var(--line); padding:16px; overflow:auto; }
+  h1 { font-size:16px; margin:0 0 4px; } p.sub { color:var(--muted); margin:0 0 14px; font-size:12px; }
+  label { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:10px; }
+  input[type=range], select { width:100%; accent-color:var(--acc); }
+  select { background:#0f1115; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px; margin-top:4px; }
+  .row { display:flex; gap:8px; margin-top:12px; }
+  button { flex:1; background:#232835; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-variant-numeric: tabular-nums; font-size:12px; }
+  th, td { padding:4px 2px; text-align:right; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:#444; }
+  .dot.on { background:var(--ok); }
+  #warn { color:#ff7a7a; font-size:12px; min-height:16px; margin-top:8px; }
+  #hud { position:absolute; left:12px; top:10px; color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<div id="view"><div id="hud">drag to orbit · scroll to zoom</div></div>
+<aside>
+  <h1>Quadruped gait simulator</h1>
+  <p class="sub">Same IK + gait maths as the Python controller (parity-tested). Stance feet should stay planted.</p>
+
+  <label>Gait</label>
+  <select id="gait"><option>trot</option><option>walk</option><option>pace</option><option>stand</option></select>
+  <label>Forward speed <span id="vx_v"></span></label><input id="vx" type="range" min="-200" max="250" value="120">
+  <label>Strafe speed <span id="vy_v"></span></label><input id="vy" type="range" min="-120" max="120" value="0">
+  <label>Turn rate (deg/s) <span id="yaw_v"></span></label><input id="yaw" type="range" min="-60" max="60" value="0">
+  <label>Body height (mm) <span id="h_v"></span></label><input id="h" type="range" min="110" max="210" value="160">
+  <label>Gait period (s) <span id="T_v"></span></label><input id="T" type="range" min="0.3" max="1.2" step="0.05" value="0.5">
+  <label>Step height (mm) <span id="sh_v"></span></label><input id="sh" type="range" min="0" max="70" value="35">
+  <label>Body roll (deg) <span id="roll_v"></span></label><input id="roll" type="range" min="-15" max="15" value="0">
+  <label>Body pitch (deg) <span id="pitch_v"></span></label><input id="pitch" type="range" min="-15" max="15" value="0">
+  <div class="row"><button id="pause">Pause</button><button id="reset">Reset</button></div>
+  <div id="warn"></div>
+  <table>
+    <thead><tr><th>leg</th><th>hip°</th><th>femur°</th><th>knee°</th></tr></thead>
+    <tbody id="angles"></tbody>
+  </table>
+</aside>
+
+<script src="kinematics.js"></script>
+<script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const G = { body_length: 186, body_width: 78, coxa: 55, femur: 107, tibia: 130, knee_direction: -1 };
+const $ = (id) => document.getElementById(id);
+const view = $("view");
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f1115);
+const camera = new THREE.PerspectiveCamera(45, 1, 1, 10000);
+camera.up.set(0, 0, 1);
+camera.position.set(-420, -480, 330);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 80);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(300, -200, 600); scene.add(sun);
+const grid = new THREE.GridHelper(4000, 80, 0x3a4150, 0x22262f); grid.rotation.x = Math.PI / 2; scene.add(grid);
+
+const robot = new THREE.Group(); scene.add(robot);
+const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(G.body_length + 40, G.body_width + 10, 40),
+  new THREE.MeshStandardMaterial({ color: 0xf2a541, roughness: 0.6 }));
+robot.add(bodyMesh);
+const head = new THREE.Mesh(new THREE.BoxGeometry(30, 50, 30), new THREE.MeshStandardMaterial({ color: 0xd88b2a }));
+head.position.set(G.body_length / 2 + 35, 0, 10); robot.add(head);
+
+const legMat = new THREE.MeshStandardMaterial({ color: 0xc9ced8, roughness: 0.5 });
+const jointMat = new THREE.MeshStandardMaterial({ color: 0x404756 });
+function segment() { const m = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 1, 12), legMat); scene.add(m); return m; }
+function joint(r = 11, mat = jointMat) { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat); scene.add(m); return m; }
+const legs = {};
+for (const leg of Kin.LEGS) legs[leg] = { segs: [segment(), segment(), segment()], joints: [joint(), joint(), joint()],
+  foot: joint(9, new THREE.MeshStandardMaterial({ color: 0x58c48b })) };
+const trails = {};
+for (const leg of Kin.LEGS) {
+  const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(600 * 3), 3));
+  trails[leg] = { line: new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x3d6f58 })), pts: [] };
+  scene.add(trails[leg].line);
+}
+const up = new THREE.Vector3(0, 1, 0);
+function place(mesh, a, b) {
+  const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
+  mesh.position.copy(va).add(vb).multiplyScalar(0.5);
+  mesh.scale.set(1, va.distanceTo(vb), 1);
+  mesh.quaternion.setFromUnitVectors(up, vb.clone().sub(va).normalize());
+}
+
+let t = 0, paused = false, odo = { x: 0, y: 0, yaw: 0 };
+const ids = ["vx", "vy", "yaw", "h", "T", "sh", "roll", "pitch"];
+const val = (id) => parseFloat($(id).value);
+function labels() { for (const id of ids) $(id + "_v").textContent = $(id).value; }
+ids.forEach((id) => $(id).addEventListener("input", labels)); labels();
+$("pause").onclick = () => { paused = !paused; $("pause").textContent = paused ? "Play" : "Pause"; };
+$("reset").onclick = () => { odo = { x: 0, y: 0, yaw: 0 }; t = 0; for (const l of Kin.LEGS) trails[l].pts = []; };
+
+// body frame -> world: rotate by odometry yaw, translate; z is ground-relative (hip height = body height)
+function toWorld(p, H) {
+  const c = Math.cos(odo.yaw), s = Math.sin(odo.yaw);
+  return [odo.x + c * p[0] - s * p[1], odo.y + s * p[0] + c * p[1], p[2] + H];
+}
+function rotPoint(R, p) { return [R[0][0]*p[0]+R[0][1]*p[1]+R[0][2]*p[2], R[1][0]*p[0]+R[1][1]*p[1]+R[1][2]*p[2], R[2][0]*p[0]+R[2][1]*p[1]+R[2][2]*p[2]]; }
+
+let last = performance.now();
+let lastAngles = null;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const cmd = { vx: val("vx"), vy: val("vy"), yaw_rate: val("yaw") * Math.PI / 180 };
+  const H = val("h"), T = val("T"), gaitKind = $("gait").value;
+  const pose = { roll: val("roll") * Math.PI / 180, pitch: val("pitch") * Math.PI / 180 };
+  if (!paused) {
+    t += dt;
+    if (gaitKind !== "stand") {
+      const c = Math.cos(odo.yaw), s = Math.sin(odo.yaw);
+      odo.x += (c * cmd.vx - s * cmd.vy) * dt; odo.y += (s * cmd.vx + c * cmd.vy) * dt; odo.yaw += cmd.yaw_rate * dt;
+    }
+  }
+  const neutral = Kin.neutralFeet(G, H, 0, G.coxa);
+  const { feet, stance } = Kin.gaitFeet(neutral, gaitKind, T, val("sh"), gaitKind === "stand" ? { vx: 0, vy: 0, yaw_rate: 0 } : cmd, t);
+  let angles;
+  try { angles = Kin.bodyIK(G, feet, pose); lastAngles = angles; $("warn").textContent = ""; }
+  catch (e) { angles = lastAngles; $("warn").textContent = "Out of reach: lower the speed or change the height."; }
+  if (angles) {
+    const R = Kin.rot(pose.roll, pose.pitch, 0);
+    robot.position.set(...toWorld([0, 0, 0], H));
+    robot.rotation.set(pose.roll, pose.pitch, odo.yaw, "ZYX");  // R = Rz(yaw) Ry(pitch) Rx(roll), as in body_ik
+    let rows = "";
+    for (const leg of Kin.LEGS) {
+      const [t1, t2, t3] = angles[leg], sd = Kin.side(leg), hp = Kin.hip(G, leg);
+      const toBody = (q) => rotPoint(R, [hp[0] + q[0], hp[1] + sd * q[1], hp[2] + q[2]]);
+      const pts = [toBody([0, 0, 0]), toBody([0, G.coxa * Math.cos(t1), G.coxa * Math.sin(t1)]),
+        toBody(Kin.kneePos(G, t1, t2)), toBody(Kin.legFK(G, t1, t2, t3))].map((p) => toWorld(p, H));
+      const L = legs[leg];
+      for (let i = 0; i < 3; i++) { place(L.segs[i], pts[i], pts[i + 1]); L.joints[i].position.set(...pts[i]); }
+      L.foot.position.set(...pts[3]);
+      L.foot.material.color.set(stance[leg] ? 0x58c48b : 0x8b93a7);
+      const tr = trails[leg]; tr.pts.push(pts[3]); if (tr.pts.length > 600) tr.pts.shift();
+      const arr = tr.line.geometry.attributes.position.array; tr.pts.forEach((p, i) => arr.set(p, i * 3));
+      tr.line.geometry.setDrawRange(0, tr.pts.length); tr.line.geometry.attributes.position.needsUpdate = true;
+      const deg = (a) => (a * 180 / Math.PI).toFixed(1);
+      rows += `<tr><td><span class="dot ${stance[leg] ? "on" : ""}"></span>${leg}</td><td>${deg(t1)}</td><td>${deg(t2)}</td><td>${deg(t3)}</td></tr>`;
+    }
+    $("angles").innerHTML = rows;
+  }
+  controls.target.lerp(new THREE.Vector3(odo.x, odo.y, H * 0.5), 0.1);
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+function resize() { const w = view.clientWidth, h = view.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener("resize", resize); resize(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

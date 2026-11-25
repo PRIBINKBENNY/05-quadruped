@@ -1,0 +1,21 @@
+[project]
+name = "quadruped"
+version = "0.1.0"
+description = "IK + gait controller for a 12-servo quadruped, with a browser simulator."
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+pi = ["adafruit-circuitpython-servokit"]
+serial = ["pyserial"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+quadruped = "quadruped.cli:main"
+
+[tool.setuptools]
+packages = ["quadruped"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

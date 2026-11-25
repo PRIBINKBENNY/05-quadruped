@@ -1,0 +1,34 @@
+# Measure your robot and edit these. Units: millimetres and degrees.
+# Defaults are close to a SpotMicro-style 12 x MG996R build.
+geometry:
+  body_length: 186      # front hip axis to rear hip axis
+  body_width: 78        # left hip axis to right hip axis
+  coxa: 55              # hip-roll axis -> hip-pitch axis, sideways offset
+  femur: 107            # hip-pitch axis -> knee axis
+  tibia: 130            # knee axis -> foot contact point
+  knee_direction: -1    # -1 = knees point backwards (dog-like), +1 = forwards
+
+stance:
+  height: 160           # hip-to-ground height when standing
+  foot_x: 0             # neutral foot position relative to the hip (forward +)
+  foot_y: 55            # neutral foot position relative to the hip (outward +), usually = coxa
+
+gait:
+  period: 0.5           # seconds per full gait cycle
+  step_height: 35
+  rate_hz: 50           # control loop / servo update rate
+
+# PCA9685 channel, direction (+1/-1), offset (deg) and safe range per joint.
+# Run `quadruped calibrate` to find offsets so that 0 deg = leg straight down, hip level.
+servos:
+  pulse_min_us: 500     # MG996R: ~500-2500 us for 0-180 deg
+  pulse_max_us: 2500
+  joints:
+    FL: {hip: [0, 1, 0],  femur: [1, 1, 0],  knee: [2, 1, 0]}
+    FR: {hip: [4, -1, 0], femur: [5, -1, 0], knee: [6, -1, 0]}
+    RL: {hip: [8, 1, 0],  femur: [9, 1, 0],  knee: [10, 1, 0]}
+    RR: {hip: [12, -1, 0], femur: [13, -1, 0], knee: [14, -1, 0]}
+  limits_deg:           # joint-angle limits (before mapping to servo angle)
+    hip: [-35, 35]
+    femur: [-70, 80]
+    knee: [0, 140]
